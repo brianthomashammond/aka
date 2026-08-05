@@ -155,20 +155,6 @@ impl DockerClient {
         }
     }
 
-    /// Start an existing stopped container
-    pub fn start_container(&self, name: &str) -> Result<()> {
-        if self.is_running(name) {
-            return Ok(());
-        }
-
-        let (success, msg) = docker_exec(&["start", name])?;
-        if success {
-            Ok(())
-        } else {
-            Err(AkaError::DockerCommand(format!("failed to start container '{name}': {msg}")))
-        }
-    }
-
     /// Idempotent container management:
     /// If the container is already running, do nothing.
     /// If it exists but is stopped, remove it first.
@@ -230,7 +216,7 @@ impl DockerClient {
     /// Attach to a container's output (runs interactively, does not return until detached)
     pub fn attach(&self, name: &str) -> Result<()> {
         let status = Command::new("docker")
-            .args(&["attach", name])
+            .args(["attach", name])
             .status()
             .map_err(|e| AkaError::DockerCommand(format!("failed to spawn docker attach: {e}")))?;
 

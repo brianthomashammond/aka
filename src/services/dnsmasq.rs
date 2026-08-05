@@ -52,7 +52,8 @@ fn build_domain_args(cfg: &config::DoryConfig) -> String {
 /// Shell-escape a string for safe use in docker run commands
 fn shell_escape(s: &str) -> String {
     // Use single quotes and escape any single quotes within
-    format!("'{}'", s.replace("'", "'\\''"))
+    let escaped_string = format!("'{}'", s.replace("'", "'\\''"));
+    escaped_string
 }
 
 /// Parse shell-escaped arguments back into a Vec<String>
@@ -211,7 +212,7 @@ impl DnsmasqService {
 
         // Execute via docker run
         let output = std::process::Command::new("docker")
-            .args(&args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+            .args(args.iter().map(|s| s.as_str()).collect::<Vec<_>>())
             .output();
 
         match output {
@@ -257,6 +258,12 @@ impl DnsmasqService {
                 port,
                 conflicting_procs.len()
             );
+            for proc in &conflicting_procs {
+                log::warn!(
+                    "  {} (pid {}, user {}): {}",
+                    proc.command, proc.pid, proc.user, proc.name
+                );
+            }
 
             // Check if it's systemd services blocking the port
             let blocking_services = self.blocking_systemd_services();

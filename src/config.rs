@@ -254,7 +254,7 @@ aka:
     #     yes|true (go ahead and kill without asking)
     #     no|false (don't kill, and don't even ask)
     kill_others: ask
-    service_start_delay: 5  # seconds to wait after restarting systemd services
+    service_start_delay: 5  # max seconds to wait for a systemd service to confirm it stopped/started
   nginx_proxy:
     enabled: true
     container_name: aka_http_proxy

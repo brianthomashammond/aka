@@ -29,8 +29,8 @@ pub enum AkaError {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
-    #[error("service '{0}' is not valid. Must be one of: proxy, dns, resolv")]
-    InvalidService(String),
+    #[error("service '{0}' is not valid. Must be one of: {1}")]
+    InvalidService(String, String),
 
     #[error("container '{0}' not found")]
     ContainerNotFound(String),

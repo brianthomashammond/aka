@@ -35,12 +35,14 @@ pub fn is_resolvconf_managed() -> bool {
 
 /// Get the nameserver line
 pub fn file_nameserver_line(nameserver: &str) -> String {
-    format!("nameserver {}", nameserver)
+    let line = format!("nameserver {}", nameserver);
+    line
 }
 
 /// Get the full nameserver content line (with comment)
 pub fn nameserver_contents(nameserver: &str) -> String {
-    format!("{}  {}", file_nameserver_line(nameserver), FILE_COMMENT)
+    let contents = format!("{}  {}", file_nameserver_line(nameserver), FILE_COMMENT);
+    contents
 }
 
 /// Check if the resolv.conf contents already has our nameserver
@@ -73,7 +75,8 @@ pub fn configure(nameserver: &str) -> Result<bool> {
         )
     } else {
         // No nameserver line found, append
-        format!("{}\n{}", prev_contents.trim(), ns_line)
+        let appended = format!("{}\n{}", prev_contents.trim(), ns_line);
+        appended
     };
 
     // Remove trailing whitespace
@@ -81,7 +84,7 @@ pub fn configure(nameserver: &str) -> Result<bool> {
 
     // Write via sudo tee (we don't run as root)
     let output = std::process::Command::new("sudo")
-        .args(&["tee", resolv_path])
+        .args(["tee", resolv_path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -117,7 +120,7 @@ pub fn configure_resolvconf(nameserver: &str) -> Result<bool> {
     let ns_line = nameserver_contents(nameserver);
 
     let output = std::process::Command::new("sudo")
-        .args(&["resolvconf", "-a", "lo.dory"])
+        .args(["resolvconf", "-a", "lo.dory"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -169,7 +172,7 @@ pub fn clean(nameserver: &str) -> Result<bool> {
 
     // Write via sudo tee
     let output = std::process::Command::new("sudo")
-        .args(&["tee", resolv_path])
+        .args(["tee", resolv_path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -203,7 +206,7 @@ pub fn clean(nameserver: &str) -> Result<bool> {
 /// Clean via resolvconf
 pub fn clean_resolvconf() -> Result<bool> {
     let output = std::process::Command::new("sudo")
-        .args(&["resolvconf", "-d", "lo.dory"])
+        .args(["resolvconf", "-d", "lo.dory"])
         .output()
         .map_err(|e| AkaError::ResolvWrite(format!("failed to run resolvconf: {e}")))?;
 
@@ -245,10 +248,6 @@ impl LinuxResolver {
         } else {
             false
         }
-    }
-
-    pub fn resolv_file(&self) -> &'static str {
-        resolv_file()
     }
 }
 

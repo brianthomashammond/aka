@@ -14,7 +14,8 @@ pub const SYSTEM_RESOLV_FILE: &str = "/etc/resolv.conf";
 /// Get the list of resolver file names (one per domain)
 pub fn resolv_file_names(cfg: &config::DoryConfig) -> Vec<String> {
     if cfg.dnsmasq.domains.is_empty() {
-        vec!["docker".to_string()]
+        let names = vec!["docker".to_string()];
+        names
     } else {
         cfg.dnsmasq.domains.iter().map(|d| d.domain.clone()).collect()
     }
@@ -48,7 +49,8 @@ pub fn configured_to_use_dinghy(cfg: &config::DoryConfig) -> bool {
 
 /// The nameserver line for a resolver file
 pub fn file_nameserver_line(cfg: &config::DoryConfig) -> String {
-    format!("nameserver {}", nameserver(cfg))
+    let line = format!("nameserver {}", nameserver(cfg));
+    line
 }
 
 /// The comment marker
@@ -58,12 +60,13 @@ pub fn file_comment() -> String {
 
 /// Generate the full contents for a resolver file
 pub fn resolv_contents(cfg: &config::DoryConfig) -> String {
-    format!(
+    let contents = format!(
         "{}\n{}\nport {}\n",
         file_comment(),
         file_nameserver_line(cfg),
         cfg.resolv.port
-    )
+    );
+    contents
 }
 
 /// Write resolver files to /etc/resolver/[domain]
@@ -74,7 +77,7 @@ pub fn configure(cfg: &config::DoryConfig) -> Result<()> {
     // Ensure /etc/resolver directory exists
     if !Path::new(resolver_dir).exists() {
         let output = std::process::Command::new("sudo")
-            .args(&["mkdir", "-p", resolver_dir])
+            .args(["mkdir", "-p", resolver_dir])
             .output()
             .map_err(|e| AkaError::PermissionDenied(format!("failed to create {}: {e}", resolver_dir)))?;
 
@@ -91,7 +94,7 @@ pub fn configure(cfg: &config::DoryConfig) -> Result<()> {
     for filename in &files {
         let contents = resolv_contents(cfg);
         let output = std::process::Command::new("sudo")
-            .args(&["tee", filename])
+            .args(["tee", filename])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -129,7 +132,7 @@ pub fn clean(cfg: &config::DoryConfig) -> Result<()> {
 
     for filename in &files {
         let output = std::process::Command::new("sudo")
-            .args(&["rm", "-f", filename])
+            .args(["rm", "-f", filename])
             .output()
             .map_err(|e| AkaError::PermissionDenied(format!("failed to remove {}: {e}", filename)))?;
 
@@ -144,19 +147,10 @@ pub fn clean(cfg: &config::DoryConfig) -> Result<()> {
 /// Check if our nameserver is configured in the resolver files
 pub fn has_our_nameserver(cfg: &config::DoryConfig) -> bool {
     let files = resolv_files(RESOLVER_DIR, cfg);
-    let comment = file_comment();
-    let ns_line = file_nameserver_line(cfg);
-    let port_str = format!("port {}", cfg.resolv.port);
 
     files.iter().all(|filename| {
         if let Ok(contents) = fs::read_to_string(filename) {
-            contents.contains(&comment)
-                && contents.contains(&port_str)
-                && if configured_to_use_dinghy(cfg) {
-                    true
-                } else {
-                    contents.contains(&ns_line)
-                }
+            contents_has_our_nameserver(&contents, cfg)
         } else {
             false
         }
@@ -178,51 +172,10 @@ pub fn contents_has_our_nameserver(contents: &str, cfg: &config::DoryConfig) -> 
         }
 }
 
-/// Get the system resolv.conf contents
-pub fn system_resolv_file_contents() -> Result<String> {
-    fs::read_to_string(SYSTEM_RESOLV_FILE)
-        .map_err(|e| AkaError::ResolvRead(format!("failed to read {}: {e}", SYSTEM_RESOLV_FILE)))
-}
-
 /// Get the contents of a specific resolver file
 pub fn resolv_file_contents(filename: &str) -> Result<String> {
     fs::read_to_string(filename)
         .map_err(|e| AkaError::ResolvRead(format!("failed to read {}: {e}", filename)))
-}
-
-/// macOS-specific resolver management
-pub struct MacosResolver;
-
-impl MacosResolver {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn configure(&self, cfg: &config::DoryConfig) -> Result<()> {
-        configure(cfg)
-    }
-
-    pub fn clean(&self, cfg: &config::DoryConfig) -> Result<()> {
-        clean(cfg)
-    }
-
-    pub fn has_our_nameserver(&self, cfg: &config::DoryConfig) -> bool {
-        has_our_nameserver(cfg)
-    }
-
-    pub fn resolv_file_names(&self, cfg: &config::DoryConfig) -> Vec<String> {
-        resolv_file_names(cfg)
-    }
-
-    pub fn resolv_files(&self, cfg: &config::DoryConfig) -> Vec<String> {
-        resolv_files(RESOLVER_DIR, cfg)
-    }
-}
-
-impl Default for MacosResolver {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[cfg(test)]

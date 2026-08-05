@@ -59,6 +59,12 @@ pub enum Command {
         service: Option<String>,
     },
 
+    /// Print the logs of a docker service container
+    Logs {
+        #[arg(help = "Service to get logs for: proxy, dns")]
+        service: Option<String>,
+    },
+
     /// Pull down the docker images that aka uses
     Pull {
         #[arg(help = "Optional service names to pull: proxy, dns")]
@@ -83,6 +89,17 @@ fn setup_logging(verbose: bool) {
     } else {
         env_logger::init();
     }
+}
+
+/// Validate that every requested service name is recognized. Returns the first
+/// invalid name as an error rather than silently ignoring it.
+fn validate_services(services: &[String], valid: &[&str]) -> error::Result<()> {
+    for s in services {
+        if !valid.contains(&s.as_str()) {
+            return Err(AkaError::InvalidService(s.clone(), valid.join(", ")));
+        }
+    }
+    Ok(())
 }
 
 fn get_images_for_services(services: &[String], cfg: &config::DoryConfig) -> Vec<(String, String)> {
@@ -131,14 +148,22 @@ fn get_images_for_services(services: &[String], cfg: &config::DoryConfig) -> Vec
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    setup_logging(cli.verbose);
+    let starting_dir = std::env::current_dir()?;
+
+    // Best-effort: a malformed config shouldn't prevent startup (e.g. `aka config-file
+    // --force` needs to work even when the existing config is broken), so config-driven
+    // debug logging just falls back to `--verbose` alone if loading fails here.
+    let debug_from_config = config::load_config(&starting_dir)
+        .map(|cfg| cfg.aka.debug)
+        .unwrap_or(false);
+    setup_logging(cli.verbose || debug_from_config);
     log::info!("aka starting: {:?}", cli.command);
 
-    let starting_dir = std::env::current_dir()?;
     let docker = docker::DockerClient::new();
 
     match cli.command {
         Command::Up { services } => {
+            validate_services(&services, &["dns", "proxy", "resolv"])?;
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: dnsmasq.enabled={}, nginx_proxy.enabled={}, resolv.enabled={}",
                 cfg.aka.dnsmasq.enabled, cfg.aka.nginx_proxy.enabled, cfg.aka.resolv.enabled);
@@ -198,23 +223,23 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Configure system resolver
-            if services.is_empty() || services.iter().any(|s| s == "resolv") {
-                if cfg.aka.resolv.enabled {
-                    match resolver::configure(&cfg.aka) {
-                        Ok(_) => {
-                            println!("resolver configured");
-                            if !started_services.iter().any(|s| *s == "resolv") {
-                                started_services.push("resolv");
-                            }
+            if (services.is_empty() || services.iter().any(|s| s == "resolv")) && cfg.aka.resolv.enabled {
+                match resolver::configure(&cfg.aka) {
+                    Ok(_) => {
+                        println!("resolver configured");
+                        if !started_services.contains(&"resolv") {
+                            started_services.push("resolv");
                         }
-                        Err(e) => {
-                            eprintln!("failed to configure resolver: {}", e);
-                        }
+                    }
+                    Err(e) => {
+                        eprintln!("failed to configure resolver: {}", e);
                     }
                 }
             }
         }
+
         Command::Down { destroy, services } => {
+            validate_services(&services, &["dns", "proxy", "resolv"])?;
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: destroy={}, dnsmasq.enabled={}, nginx_proxy.enabled={}, resolv.enabled={}",
                 destroy, cfg.aka.dnsmasq.enabled, cfg.aka.nginx_proxy.enabled, cfg.aka.resolv.enabled);
@@ -226,45 +251,37 @@ async fn main() -> anyhow::Result<()> {
 
             let mut stopped_services = Vec::new();
 
-            if services.is_empty() || services.iter().any(|s| s == "dns") {
-                if cfg.aka.dnsmasq.enabled {
-                    let dnsmasq = services::dnsmasq::DnsmasqService::new();
-                    if destroy {
-                        if let Err(e) = docker.remove_container(&cfg.aka.dnsmasq.container_name) {
-                            log::error!("failed to remove dnsmasq container: {}", e);
-                        } else {
-                            log::info!("dnsmasq container removed");
-                            stopped_services.push("dns");
-                        }
+            if (services.is_empty() || services.iter().any(|s| s == "dns")) && cfg.aka.dnsmasq.enabled {
+                let dnsmasq = services::dnsmasq::DnsmasqService::new();
+                if destroy {
+                    if let Err(e) = docker.remove_container(&cfg.aka.dnsmasq.container_name) {
+                        log::error!("failed to remove dnsmasq container: {}", e);
                     } else {
-                        if let Err(e) = dnsmasq.stop(&cfg.aka) {
-                            log::error!("failed to stop dnsmasq: {}", e);
-                        } else if docker.container_exists(&cfg.aka.dnsmasq.container_name) {
-                            log::info!("dnsmasq container stopped");
-                            stopped_services.push("dns");
-                        }
+                        log::info!("dnsmasq container removed");
+                        stopped_services.push("dns");
                     }
+                } else if let Err(e) = dnsmasq.stop(&cfg.aka) {
+                    log::error!("failed to stop dnsmasq: {}", e);
+                } else if docker.container_exists(&cfg.aka.dnsmasq.container_name) {
+                    log::info!("dnsmasq container stopped");
+                    stopped_services.push("dns");
                 }
             }
 
-            if services.is_empty() || services.iter().any(|s| s == "proxy") {
-                if cfg.aka.nginx_proxy.enabled {
-                    let proxy = services::proxy::ProxyService::new();
-                    if destroy {
-                        if let Err(e) = docker.remove_container(&cfg.aka.nginx_proxy.container_name) {
-                            log::error!("failed to remove nginx proxy container: {}", e);
-                        } else {
-                            log::info!("nginx proxy container removed");
-                            stopped_services.push("proxy");
-                        }
+            if (services.is_empty() || services.iter().any(|s| s == "proxy")) && cfg.aka.nginx_proxy.enabled {
+                let proxy = services::proxy::ProxyService::new();
+                if destroy {
+                    if let Err(e) = docker.remove_container(&cfg.aka.nginx_proxy.container_name) {
+                        log::error!("failed to remove nginx proxy container: {}", e);
                     } else {
-                        if let Err(e) = proxy.stop(&cfg.aka) {
-                            log::error!("failed to stop nginx proxy: {}", e);
-                        } else if docker.container_exists(&cfg.aka.nginx_proxy.container_name) {
-                            log::info!("nginx proxy container stopped");
-                            stopped_services.push("proxy");
-                        }
+                        log::info!("nginx proxy container removed");
+                        stopped_services.push("proxy");
                     }
+                } else if let Err(e) = proxy.stop(&cfg.aka) {
+                    log::error!("failed to stop nginx proxy: {}", e);
+                } else if docker.container_exists(&cfg.aka.nginx_proxy.container_name) {
+                    log::info!("nginx proxy container stopped");
+                    stopped_services.push("proxy");
                 }
             }
 
@@ -273,18 +290,16 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Clean up system resolver
-            if services.is_empty() || services.iter().any(|s| s == "resolv") {
-                if cfg.aka.resolv.enabled {
-                    match resolver::clean(&cfg.aka) {
-                        Ok(_) => {
-                            log::info!("system resolver cleaned");
-                            if !stopped_services.iter().any(|s| *s == "resolv") {
-                                stopped_services.push("resolv");
-                            }
+            if (services.is_empty() || services.iter().any(|s| s == "resolv")) && cfg.aka.resolv.enabled {
+                match resolver::clean(&cfg.aka) {
+                    Ok(_) => {
+                        log::info!("system resolver cleaned");
+                        if !stopped_services.contains(&"resolv") {
+                            stopped_services.push("resolv");
                         }
-                        Err(e) => {
-                            log::error!("failed to clean system resolver: {}", e);
-                        }
+                    }
+                    Err(e) => {
+                        log::error!("failed to clean system resolver: {}", e);
                     }
                 }
             }
@@ -293,6 +308,7 @@ async fn main() -> anyhow::Result<()> {
                 log::info!("stopped services: {:?}", stopped_services);
             }
         }
+
         Command::Restart { destroy } => {
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: destroy={}, dnsmasq.enabled={}, nginx_proxy.enabled={}, resolv.enabled={}",
@@ -333,21 +349,21 @@ async fn main() -> anyhow::Result<()> {
 
             if cfg.aka.dnsmasq.enabled {
                 let dnsmasq = services::dnsmasq::DnsmasqService::new();
-                if let Ok(running) = dnsmasq.start_with_conflict_resolution(&cfg.aka) {
-                    if running {
-                        log::info!("dnsmasq container restarted successfully");
-                        started_services.push("dns");
-                    }
+                if let Ok(running) = dnsmasq.start_with_conflict_resolution(&cfg.aka)
+                    && running
+                {
+                    log::info!("dnsmasq container restarted successfully");
+                    started_services.push("dns");
                 }
             }
 
             if cfg.aka.nginx_proxy.enabled {
                 let proxy = services::proxy::ProxyService::new();
-                if let Ok(running) = proxy.ensure_running(&cfg.aka) {
-                    if running {
-                        log::info!("nginx proxy container restarted successfully");
-                        started_services.push("proxy");
-                    }
+                if let Ok(running) = proxy.ensure_running(&cfg.aka)
+                    && running
+                {
+                    log::info!("nginx proxy container restarted successfully");
+                    started_services.push("proxy");
                 }
             }
 
@@ -356,7 +372,7 @@ async fn main() -> anyhow::Result<()> {
                 match resolver::configure(&cfg.aka) {
                     Ok(_) => {
                         log::info!("system resolver reconfigured");
-                        if !started_services.iter().any(|s| *s == "resolv") {
+                        if !started_services.contains(&"resolv") {
                             started_services.push("resolv");
                         }
                     }
@@ -370,6 +386,7 @@ async fn main() -> anyhow::Result<()> {
                 log::info!("restarted services: {:?}", started_services);
             }
         }
+
         Command::Status => {
             let cfg = config::load_config(&starting_dir)?;
             let proxy_status = docker.get_container_status(&cfg.aka.nginx_proxy.container_name);
@@ -378,7 +395,28 @@ async fn main() -> anyhow::Result<()> {
                 cfg.aka.dnsmasq.container_name, dns_status.exists, dns_status.running);
             println!("nginx-proxy ({}): exists={}, running={}",
                 cfg.aka.nginx_proxy.container_name, proxy_status.exists, proxy_status.running);
+            println!("resolver   ({}): configured={}",
+                resolver::resolv_file(), resolver::has_our_nameserver(&cfg.aka));
+
+            if cli.verbose {
+                match resolver::os::current_os() {
+                    resolver::os::OsType::Linux => {
+                        if let Ok(contents) = resolver::resolv_file_contents() {
+                            println!("--- {} ---\n{}", resolver::resolv_file(), contents);
+                        }
+                    }
+                    resolver::os::OsType::Macos => {
+                        for filename in resolver::macos::resolv_files(resolver::macos::RESOLVER_DIR, &cfg.aka) {
+                            if let Ok(contents) = resolver::macos::resolv_file_contents(&filename) {
+                                println!("--- {} ---\n{}", filename, contents);
+                            }
+                        }
+                    }
+                    resolver::os::OsType::Unknown => {}
+                }
+            }
         }
+
         Command::ConfigFile { upgrade, force } => {
             let home_path = config::home_config_path();
             if upgrade {
@@ -405,6 +443,7 @@ async fn main() -> anyhow::Result<()> {
                 log::info!("default config written to: {}", path.display());
             }
         }
+
         Command::Attach { service } => {
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: dnsmasq.enabled={}, nginx_proxy.enabled={}",
@@ -419,8 +458,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("proxy") => cfg.aka.nginx_proxy.container_name.clone(),
                 Some("dns") => cfg.aka.dnsmasq.container_name.clone(),
                 Some(s) => {
-                    log::error!("unknown service '{}': must be proxy or dns", s);
-                    return Ok(());
+                    return Err(AkaError::InvalidService(s.to_string(), "proxy, dns".to_string()).into());
                 }
                 None => {
                     log::info!("no service specified, attaching to proxy");
@@ -436,7 +474,42 @@ async fn main() -> anyhow::Result<()> {
             log::info!("attaching to container '{}'", container_name);
             docker.attach(&container_name)?;
         }
+
+        Command::Logs { service } => {
+            let cfg = config::load_config(&starting_dir)?;
+            log::info!("config loaded: dnsmasq.enabled={}, nginx_proxy.enabled={}",
+                cfg.aka.dnsmasq.enabled, cfg.aka.nginx_proxy.enabled);
+
+            if !docker.is_installed() {
+                log::error!("docker is not installed or not in PATH");
+                return Err(AkaError::DockerNotFound.into());
+            }
+
+            let container_name = match service.as_deref() {
+                Some("proxy") => cfg.aka.nginx_proxy.container_name.clone(),
+                Some("dns") => cfg.aka.dnsmasq.container_name.clone(),
+                Some(s) => {
+                    return Err(AkaError::InvalidService(s.to_string(), "proxy, dns".to_string()).into());
+                }
+                None => {
+                    log::info!("no service specified, getting proxy logs");
+                    cfg.aka.nginx_proxy.container_name.clone()
+                }
+            };
+
+            if !docker.container_exists(&container_name) {
+                log::error!("container '{}' not found", container_name);
+                return Err(AkaError::ContainerNotFound(container_name).into());
+            }
+
+            match docker.get_logs(&container_name) {
+                Ok(logs) => println!("{}", logs),
+                Err(e) => eprintln!("failed to get logs for '{}': {}", container_name, e),
+            }
+        }
+
         Command::Pull { services } => {
+            validate_services(&services, &["dns", "proxy"])?;
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: dnsmasq.enabled={}, nginx_proxy.enabled={}",
                 cfg.aka.dnsmasq.enabled, cfg.aka.nginx_proxy.enabled);
@@ -462,6 +535,7 @@ async fn main() -> anyhow::Result<()> {
                 log::info!("pulled all service images");
             }
         }
+
         Command::Ip { service } => {
             let cfg = config::load_config(&starting_dir)?;
             log::info!("config loaded: dnsmasq.enabled={}, nginx_proxy.enabled={}",
@@ -471,8 +545,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("proxy") => cfg.aka.nginx_proxy.container_name.clone(),
                 Some("dns") => cfg.aka.dnsmasq.container_name.clone(),
                 Some(s) => {
-                    log::error!("unknown service '{}': must be proxy or dns", s);
-                    return Ok(());
+                    return Err(AkaError::InvalidService(s.to_string(), "proxy, dns".to_string()).into());
                 }
                 None => {
                     log::info!("no service specified, getting proxy IP");
@@ -486,6 +559,7 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("failed to get IP for '{}': {}", container_name, e),
             }
         }
+
         Command::Upgrade => {
             let current_version = env!("CARGO_PKG_VERSION");
             println!("current version: {}", current_version);

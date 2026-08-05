@@ -78,12 +78,13 @@ aka down
 | `aka up [proxy\|dns\|resolv]` | Start all services, or specific ones |
 | `aka down [proxy\|dns\|resolv]` | Stop and remove all services, or specific ones |
 | `aka restart` | Stop then start all services |
-| `aka status` | Show running state of each container |
+| `aka status` | Show running state of each container and DNS resolver configuration |
 | `aka config-file` | Write default `~/.aka.yml` |
 | `aka config-file --upgrade` | Migrate existing config to the latest format |
 | `aka config-file --force` | Overwrite existing config with defaults |
 | `aka pull [proxy\|dns]` | Pull the latest Docker images |
 | `aka attach [proxy\|dns]` | Attach to a container's output stream |
+| `aka logs [proxy\|dns]` | Print a container's logs |
 | `aka ip [proxy\|dns]` | Print the IPv4 address of a container |
 | `aka upgrade` | Check for a newer version of aka |
 
@@ -92,6 +93,8 @@ Pass `--verbose` to any command to see debug-level output:
 ```bash
 aka --verbose up
 ```
+
+`aka status --verbose` additionally prints the raw contents of the resolver file(s) being managed (`/etc/resolv.conf` on Linux, each `/etc/resolver/<domain>` file on macOS).
 
 ---
 
@@ -129,6 +132,8 @@ aka:
     enabled: true
     nameserver: 127.0.0.1
     port: 53
+
+  debug: false  # set to true for the same effect as always passing --verbose
 ```
 
 ### Multiple domains
@@ -152,6 +157,14 @@ Controls what happens when another process is already using the dnsmasq port:
 - `ask` — prompt before killing (default)
 - `yes` / `true` — kill automatically
 - `no` / `false` — fail without killing
+
+### `service_start_delay`
+
+When aka stops or restarts a conflicting systemd service (see below), it polls the service's actual state rather than sleeping blindly. `service_start_delay` is the maximum number of seconds to wait for that state change to be confirmed — aka returns as soon as the service is actually stopped/running, and only waits the full duration if the service is slow to respond.
+
+### `debug`
+
+Setting `debug: true` forces debug-level logging on every run — the same effect as always passing `--verbose` (see [Commands](#commands) above), without having to type the flag each time. Defaults to `false`.
 
 ### macOS port note
 
@@ -185,7 +198,7 @@ Place your certs in `ssl_certs_dir` (or leave it empty to use the built-in self-
 
 **Containers won't start — port conflict**
 
-If port 53 is in use (common on Ubuntu where `systemd-resolved` owns it), aka will detect and temporarily stop `systemd-resolved` or `NetworkManager` while dnsmasq starts, then restart them. Set `kill_others: yes` to do this automatically.
+If port 53 is in use (common on Ubuntu where `systemd-resolved` owns it), aka will detect and temporarily stop `systemd-resolved` or `NetworkManager` while dnsmasq starts, then restart them, waiting for each state change to be confirmed (see `service_start_delay` above) rather than a fixed delay. Set `kill_others: yes` to do this automatically.
 
 **DNS not resolving after `aka up`**
 
@@ -199,6 +212,7 @@ If port 53 is in use (common on Ubuntu where `systemd-resolved` owns it), aka wi
 Some operations require elevated privileges:
 - `lsof` port conflict detection
 - Writing to `/etc/resolver/` (macOS) or `/etc/resolv.conf` (Linux)
+- Stopping/restarting conflicting systemd services (`systemd-resolved`, `NetworkManager`) on Linux
 
 You will be prompted for your password when needed.
 
