@@ -7,24 +7,6 @@ use crate::services::systemd;
 /// The default Dnsmasq Docker image
 const DEFAULT_DNSMASQ_IMAGE: &str = "freedomben/dory-dnsmasq:1.1.0";
 
-/// Check if a string looks like a dinghy VM IP
-fn is_dinghy_match(addr: &str) -> bool {
-    // Dinghy VM IPs are typically in the range 192.168.99.x
-    // This is a heuristic - the original Ruby code delegates to Dory::Dinghy.match?
-    addr.starts_with("192.168.99.")
-}
-
-/// Resolve an address, substituting dinghy VM IP if needed
-fn resolve_address(addr: &str) -> String {
-    if is_dinghy_match(addr) {
-        // In the original code, this would call Dory::Dinghy.ip
-        // For now, return the address as-is since we don't have dinghy detection
-        addr.to_string()
-    } else {
-        addr.to_string()
-    }
-}
-
 /// Get the port for dnsmasq.
 /// On Linux port 53 is required. On macOS, if the port is still the Linux default (53),
 /// fall back to 19323 so we don't conflict with the host resolver.
@@ -41,10 +23,7 @@ fn build_domain_args(cfg: &config::DoryConfig) -> String {
     cfg.dnsmasq
         .domains
         .iter()
-        .map(|d| {
-            let resolved = resolve_address(&d.address);
-            format!("{} {}", shell_escape(&d.domain), shell_escape(&resolved))
-        })
+        .map(|d| format!("{} {}", shell_escape(&d.domain), shell_escape(&d.address)))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -336,19 +315,6 @@ mod tests {
         assert_eq!(shell_escape("docker"), "'docker'");
         assert_eq!(shell_escape("it's"), "'it'\\''s'");
         assert_eq!(shell_escape("127.0.0.1"), "'127.0.0.1'");
-    }
-
-    #[test]
-    fn test_is_dinghy_match() {
-        assert!(super::is_dinghy_match("192.168.99.100"));
-        assert!(!super::is_dinghy_match("127.0.0.1"));
-        assert!(!super::is_dinghy_match("10.0.0.1"));
-    }
-
-    #[test]
-    fn resolve_address_passthrough() {
-        assert_eq!(resolve_address("127.0.0.1"), "127.0.0.1");
-        assert_eq!(resolve_address("192.168.99.100"), "192.168.99.100");
     }
 
     #[test]

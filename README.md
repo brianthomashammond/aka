@@ -4,6 +4,8 @@ A local development DNS and reverse proxy manager for Docker. Aka lets you acces
 
 Aka is a Rust reimplementation of [Dory](https://github.com/FreedomBen/dory). If you are migrating from Dory, rename your `.dory.yml` to `.aka.yml` — the config format is otherwise identical.
 
+**Not supported: [Dinghy](https://github.com/codekitchen/dinghy).** Dory let you set `nameserver`/`address` config values to the literal string `dinghy`, which it would substitute at runtime with the IP of a running Dinghy VM (`dinghy ip`). Dinghy itself has been unmaintained since Docker Desktop for Mac made its VirtualBox-based Docker host unnecessary, so aka does not implement this substitution — a literal `dinghy` value in `nameserver`/`address` is used as-is rather than resolved to a VM IP.
+
 ---
 
 ## How it works

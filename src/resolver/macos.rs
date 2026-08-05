@@ -29,22 +29,9 @@ pub fn resolv_files(dir: &str, cfg: &config::DoryConfig) -> Vec<String> {
         .collect()
 }
 
-/// Get the nameserver address (respects dinghy VM matching)
+/// Get the nameserver address
 pub fn nameserver(cfg: &config::DoryConfig) -> String {
-    let ns = &cfg.resolv.nameserver;
-    // Dinghy VM IPs start with 192.168.99.x
-    if ns.starts_with("192.168.99.") {
-        // In the original, this would call Dory::Dinghy.ip
-        // For now, return as-is since we don't have dinghy detection
-        ns.clone()
-    } else {
-        ns.clone()
-    }
-}
-
-/// Check if the resolver is configured to use a dinghy VM
-pub fn configured_to_use_dinghy(cfg: &config::DoryConfig) -> bool {
-    nameserver(cfg).starts_with("192.168.99.")
+    cfg.resolv.nameserver.clone()
 }
 
 /// The nameserver line for a resolver file
@@ -163,13 +150,7 @@ pub fn contents_has_our_nameserver(contents: &str, cfg: &config::DoryConfig) -> 
     let ns_line = file_nameserver_line(cfg);
     let port_str = format!("port {}", cfg.resolv.port);
 
-    contents.contains(&comment)
-        && contents.contains(&port_str)
-        && if configured_to_use_dinghy(cfg) {
-            true
-        } else {
-            contents.contains(&ns_line)
-        }
+    contents.contains(&comment) && contents.contains(&port_str) && contents.contains(&ns_line)
 }
 
 /// Get the contents of a specific resolver file
@@ -229,23 +210,6 @@ mod tests {
     fn test_nameserver_default() {
         let cfg = default_cfg();
         assert_eq!(nameserver(&cfg), "127.0.0.1");
-    }
-
-    #[test]
-    fn test_nameserver_dinghy_passthrough() {
-        let mut cfg = default_cfg();
-        cfg.resolv.nameserver = "192.168.99.100".to_string();
-        assert_eq!(nameserver(&cfg), "192.168.99.100");
-    }
-
-    #[test]
-    fn test_configured_to_use_dinghy() {
-        let cfg = default_cfg();
-        assert!(!configured_to_use_dinghy(&cfg));
-
-        let mut cfg2 = default_cfg();
-        cfg2.resolv.nameserver = "192.168.99.100".to_string();
-        assert!(configured_to_use_dinghy(&cfg2));
     }
 
     #[test]
